@@ -1,29 +1,6 @@
-import pysb.bng
 import numpy
-from scipy.integrate import ode
-from scipy.weave import inline
-import scipy.weave.build_tools
-import distutils.errors
-import sympy
-import re
-import itertools
+from pysb.simulator import ScipyOdeSimulator
 
-# some sane default options for a few well-known integrators
-default_integrator_options = {
-    'vode': {
-        'method': 'bdf',
-        'with_jacobian': True,
-        # Set nsteps as high as possible to give our users flexibility in
-        # choosing their time step. (Let's be safe and assume vode was compiled
-        # with 32-bit ints. What would actually happen if it was and we passed
-        # 2**64-1 though?)
-        'nsteps': 2**31 - 1,
-        },
-    'cvode': {
-        'method': 'bdf',
-        'iteration': 'newton',
-        },
-    }
 
 class Solver(object):
     """An interface for numeric integration of models.
@@ -36,10 +13,20 @@ class Solver(object):
         Time values over which to integrate. The first and last values define
         the time range, and the returned trajectories will be sampled at every
         value.
-    integrator : string, optional
+    use_analytic_jacobian : boolean, optional
+        Whether to provide the solver a Jacobian matrix derived analytically
+        from the model ODEs. Defaults to False. If False, the integrator may
+        approximate the Jacobian by finite-differences calculations when
+        necessary (depending on the integrator and settings).
+    integrator : string, optional (default: 'vode')
         Name of the integrator to use, taken from the list of integrators known
         to :py:class:`scipy.integrate.ode`.
-    integrator_params
+    cleanup : bool, optional
+        If True (default), delete the temporary files after the simulation is
+        finished. If False, leave them in place. Useful for debugging.
+    verbose : bool, optional (default: False)
+        Verbose output 
+    integrator_options
         Additional parameters for the integrator.
 
     Attributes
@@ -52,11 +39,17 @@ class Solver(object):
         Species trajectories. Dimensionality is ``(len(tspan),
         len(model.species))``.
     yobs : numpy.ndarray with record-style data-type
-        Observable trajectories. Length is is ``len(tspan)`` and record names
+        Observable trajectories. Length is ``len(tspan)`` and record names
         follow ``model.observables`` names.
     yobs_view : numpy.ndarray
-        An array view (sharing the same data buffer) on ``yobs``. Dimensionality
-        is ``(len(tspan), len(model.observables))``.
+        An array view (sharing the same data buffer) on ``yobs``.
+        Dimensionality is ``(len(tspan), len(model.observables))``.
+    yexpr : numpy.ndarray with record-style data-type
+        Expression trajectories. Length is ``len(tspan)`` and record names
+        follow ``model.expressions_dynamic()`` names.
+    yexpr_view : numpy.ndarray
+        An array view (sharing the same data buffer) on ``yexpr``.
+        Dimensionality is ``(len(tspan), len(model.expressions_dynamic()))``.
     integrator : scipy.integrate.ode
         Integrator object.
 
@@ -68,64 +61,50 @@ class Solver(object):
     single Solver object and then call its ``run`` method as needed.
 
     """
+    def __init__(self, model, tspan, use_analytic_jacobian=False,
+                 integrator='vode', cleanup=True,
+                 verbose=False, **integrator_options):
+        self._sim = ScipyOdeSimulator(model, verbose=verbose, tspan=tspan,
+                                     use_analytic_jacobian=
+                                     use_analytic_jacobian,
+                                     integrator=integrator, cleanup=cleanup,
+                                     **integrator_options)
+        self.result = None
+        self._yexpr_view = None
+        self._yobs_view = None
 
-    @staticmethod
-    def _test_inline():
-        """Detect whether scipy.weave.inline is functional."""
-        if not hasattr(Solver, '_use_inline'):
-            Solver._use_inline = False
-            try:
-                inline('int i;', force=1)
-                Solver._use_inline = True
-            except (scipy.weave.build_tools.CompileError,
-                    distutils.errors.CompileError, ImportError):
-                pass
+    @property
+    def _use_inline(self):
+        return ScipyOdeSimulator._use_inline
 
-    def __init__(self, model, tspan, integrator='vode', **integrator_options):
+    @_use_inline.setter
+    def _use_inline(self, use_inline):
+        ScipyOdeSimulator._use_inline = use_inline
 
-        pysb.bng.generate_equations(model)
+    @property
+    def y(self):
+        return self.result.species if self.result is not None else None
 
-        code_eqs = '\n'.join(['ydot[%d] = %s;' % (i, sympy.ccode(model.odes[i])) for i in range(len(model.odes))])
-        code_eqs = re.sub(r's(\d+)', lambda m: 'y[%s]' % (int(m.group(1))), code_eqs)
-        for i, p in enumerate(model.parameters):
-            code_eqs = re.sub(r'\b(%s)\b' % p.name, 'p[%d]' % i, code_eqs)
+    @property
+    def yobs(self):
+        return self.result.observables if self.result is not None else None
 
-        Solver._test_inline()
-        # If we can't use weave.inline to run the C code, compile it as Python code instead for use with
-        # exec. Note: C code with array indexing, basic math operations, and pow() just happens to also
-        # be valid Python.  If the equations ever have more complex things in them, this might fail.
-        if not Solver._use_inline:
-            code_eqs_py = compile(code_eqs, '<%s odes>' % model.name, 'exec')
+    @property
+    def yobs_view(self):
+        if self._yobs_view is None:
+            self._yobs_view = self.yobs.view(float).reshape(len(self.yobs), -1)
+        return self._yobs_view
 
-        def rhs(t, y, p):
-            ydot = self.ydot
-            # note that the evaluated code sets ydot as a side effect
-            if Solver._use_inline:
-                inline(code_eqs, ['ydot', 't', 'y', 'p']);
-            else:
-                exec code_eqs_py in locals()
-            return ydot
+    @property
+    def yexpr(self):
+        return self.result.expressions if self.result is not None else None
 
-        # build integrator options list from our defaults and any kwargs passed to this function
-        options = {}
-        try:
-            options.update(default_integrator_options[integrator])
-        except KeyError as e:
-            pass
-        options.update(integrator_options)
-
-        self.model = model
-        self.tspan = tspan
-        self.y = numpy.ndarray((len(tspan), len(model.species)))
-        self.ydot = numpy.ndarray(len(model.species))
-        if len(model.observables):
-            self.yobs = numpy.ndarray(len(tspan), zip(model.observables.keys(),
-                                                      itertools.repeat(float)))
-        else:
-            self.yobs = numpy.ndarray((len(tspan), 0))
-        self.yobs_view = self.yobs.view(float).reshape(len(self.yobs), -1)
-        self.integrator = ode(rhs).set_integrator(integrator, **options)
-
+    @property
+    def yexpr_view(self):
+        if self._yexpr_view is None:
+            self._yexpr_view = self.yexpr.view(float).reshape(len(self.yexpr),
+                                                              -1)
+        return self._yexpr_view
 
     def run(self, param_values=None, y0=None):
         """Perform an integration.
@@ -135,61 +114,25 @@ class Solver(object):
 
         Parameters
         ----------
-        param_values : vector-like, optional
+        param_values : vector-like or dictionary, optional
             Values to use for every parameter in the model. Ordering is
-            determined by the order of model.parameters. If not specified,
-            parameter values will be taken directly from model.parameters.
+            determined by the order of model.parameters. 
+            If passed as a dictionary, keys must be parameter names.
+            If not specified, parameter values will be taken directly from
+            model.parameters.
         y0 : vector-like, optional
             Values to use for the initial condition of all species. Ordering is
             determined by the order of model.species. If not specified, initial
-            conditions will be taken from model.initial_conditions (with initial
-            condition parameter values taken from `param_values` if specified).
-
+            conditions will be taken from model.initials (with initial condition
+            parameter values taken from `param_values` if specified).
         """
-
-        if param_values is not None:
-            # accept vector of parameter values as an argument
-            if len(param_values) != len(self.model.parameters):
-                raise Exception("param_values must be the same length as model.parameters")
-            if not isinstance(param_values, numpy.ndarray):
-                param_values = numpy.array(param_values)
-        else:
-            # create parameter vector from the values in the model
-            param_values = numpy.array([p.value for p in self.model.parameters])
-
-        if y0 is not None:
-            # accept vector of species amounts as an argument
-            if len(y0) != self.y.shape[1]:
-                raise Exception("y0 must be the same length as model.species")
-            if not isinstance(y0, numpy.ndarray):
-                y0 = numpy.array(y0)
-        else:
-            y0 = numpy.zeros((self.y.shape[1],))
-            for cp, ic_param in self.model.initial_conditions:
-                pi = self.model.parameters.index(ic_param)
-                si = self.model.get_species_index(cp)
-                if si is None:
-                    raise Exception("Species not found in model: %s" % repr(cp))
-                y0[si] = param_values[pi]
-
-        # perform the actual integration
-        self.integrator.set_initial_value(y0, self.tspan[0])
-        self.integrator.set_f_params(param_values)
-        self.y[0] = y0
-        i = 1
-        while self.integrator.successful() and self.integrator.t < self.tspan[-1]:
-            self.y[i] = self.integrator.integrate(self.tspan[i])
-            i += 1
-        if self.integrator.t < self.tspan[-1]:
-            self.y[i:, :] = 'nan'
-
-        for i, obs in enumerate(self.model.observables):
-            self.yobs_view[:, i] = \
-                (self.y[:, obs.species] * obs.coefficients).sum(1)
+        self._yobs_view = None
+        self._yexpr_view = None
+        self.result = self._sim.run(param_values=param_values, initials=y0)
 
 
 def odesolve(model, tspan, param_values=None, y0=None, integrator='vode',
-             **integrator_options):
+             cleanup=True, verbose=False, **integrator_options):
     """Integrate a model's ODEs over a given timespan.
 
     This is a simple function-based interface to integrating (a.k.a. solving or
@@ -213,12 +156,17 @@ def odesolve(model, tspan, param_values=None, y0=None, integrator='vode',
     y0 : vector-like, optional
         Values to use for the initial condition of all species. Ordering is
         determined by the order of model.species. If not specified, initial
-        conditions will be taken from model.initial_conditions (with initial
-        condition parameter values taken from `param_values` if specified).
+        conditions will be taken from model.initials (with initial condition
+        parameter values taken from `param_values` if specified).
     integrator : string, optional
         Name of the integrator to use, taken from the list of integrators known
         to :py:class:`scipy.integrate.ode`.
-    integrator_params
+    cleanup : bool, optional
+        Remove temporary files after completion if True. Set to False for
+        debugging purposes.
+    verbose : bool, optionsal
+        Increase verbosity of simulator output.
+    integrator_options :
         Additional parameters for the integrator.
 
     Returns
@@ -265,47 +213,37 @@ def odesolve(model, tspan, param_values=None, y0=None, integrator='vode',
     >>> from numpy import linspace
     >>> numpy.set_printoptions(precision=4)
     >>> yfull = odesolve(model, linspace(0, 40, 10))
-    >>> print yfull['A_total']   #doctest: +NORMALIZE_WHITESPACE
-    [ 1.      0.899   0.8506  0.8179  0.793   0.7728  0.7557  0.7408  0.7277
+    >>> print(yfull['A_total'])            #doctest: +NORMALIZE_WHITESPACE
+    [1.      0.899   0.8506  0.8179  0.793   0.7728  0.7557  0.7408  0.7277
     0.7158]
 
     Obtain a view on a returned record array which uses an atomic data-type and
     integer indexing (note that the view's data buffer is shared with the
     original array so there is no extra memory cost):
 
-    >>> print yfull.shape
-    (10,)
-    >>> print yfull.dtype   #doctest: +NORMALIZE_WHITESPACE
+    >>> yfull.shape == (10, )
+    True
+    >>> print(yfull.dtype)                 #doctest: +NORMALIZE_WHITESPACE
     [('__s0', '<f8'), ('__s1', '<f8'), ('__s2', '<f8'), ('A_total', '<f8'),
     ('B_total', '<f8'), ('C_total', '<f8')]
-    >>> print yfull[0:4, 1:3]
+    >>> print(yfull[0:4, 1:3])             #doctest: +ELLIPSIS
     Traceback (most recent call last):
       ...
-    IndexError: too many indices
+    IndexError: too many indices...
     >>> yarray = yfull.view(float).reshape(len(yfull), -1)
-    >>> print yarray.shape
-    (10, 6)
-    >>> print yarray.dtype
+    >>> yarray.shape == (10, 6)
+    True
+    >>> print(yarray.dtype)
     float64
-    >>> print yarray[0:4, 1:3]
-    [[  0.0000e+00   0.0000e+00]
-     [  2.1672e-05   1.0093e-01]
-     [  1.6980e-05   1.4943e-01]
-     [  1.4502e-05   1.8209e-01]]
+    >>> print(yarray[0:4, 1:3])            #doctest: +NORMALIZE_WHITESPACE
+    [[0.0000e+00   0.0000e+00]
+     [2.1672e-05   1.0093e-01]
+     [1.6980e-05   1.4943e-01]
+     [1.4502e-05   1.8209e-01]]
 
     """
-
-    solver = Solver(model, tspan, integrator, **integrator_options)
-    solver.run(param_values, y0)
-
-    species_names = ['__s%d' % i for i in range(solver.y.shape[1])]
-    yfull_dtype = zip(species_names, itertools.repeat(float))
-    if len(solver.yobs.dtype):
-        yfull_dtype += solver.yobs.dtype.descr
-    yfull = numpy.ndarray(len(solver.y), yfull_dtype)
-
-    yfull_view = yfull.view(float).reshape(len(yfull), -1)
-    yfull_view[:, :solver.y.shape[1]] = solver.y
-    yfull_view[:, solver.y.shape[1]:] = solver.yobs_view
-
-    return yfull
+    integrator_options['integrator'] = integrator
+    sim = ScipyOdeSimulator(model, tspan=tspan, cleanup=cleanup,
+                            verbose=verbose, **integrator_options)
+    simres = sim.run(param_values=param_values, initials=y0)
+    return simres.all

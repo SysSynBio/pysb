@@ -29,7 +29,7 @@ sampled at intervals of 10 seconds::
     >>> t = [0, 10, 20, 30, 40, 50, 60]
     >>> solver = Solver(model, t)
     >>> solver.run()
-    >>> print solver.y[:, 1]
+    >>> print(solver.y[:, 1])
     [   0.   30.   60.   90.  120.  150.  180.]
 
 Creating a model
@@ -273,24 +273,29 @@ parameters. The rule interactions make use of the following
 operators::
 
    *+* operator to represent complexation 
-   *<>* operator to represent backward/forward reaction
+   *|* operator to represent backward/forward reaction
    *>>* operator to represent forward-only reaction
    *%* operator to represent a binding interaction between two species
+
+.. note:: PySB used to use the <> operator for reversible rules, but that
+          operator was removed in Python 3. All new models should use the |
+          operator instead. Support for the <> in PySB with Python 2 will be
+          removed in a future version of PySB.
 
 To illustrate the use of the operators and the rule syntax we write
 the complex formation reaction with labels illustrating the parts of
 the rule::
 
-   Rule('C8_Bid_bind', C8(b=None) + Bid(b=None, S='u') <> C8(b=1) % Bid(b=1, S='u'), *[kf, kr]) 
-	     |              |     |           |         |     |    |     |             |
-             |              |     |           |         |     |    |     |            parameter list
-	     |              |     |           |         |     |    |     |
-	     |              |     |           |         |     |    |    bound species
-	     |              |     |           |         |     |    |
-	     |		    |     |           |         |     |   binding operator
-	     |              |     |           |         |     |
-	     |              |     |           |         |    bound species
-	     |              |     |           |         |
+   Rule('C8_Bid_bind', C8(b=None) + Bid(b=None, S='u') | C8(b=1) % Bid(b=1, S='u'), *[kf, kr])
+	     |              |     |           |        |     |    |     |             |
+             |              |     |           |        |     |    |     |            parameter list
+	     |              |     |           |        |     |    |     |
+	     |              |     |           |        |     |    |    bound species
+	     |              |     |           |        |     |    |
+	     |		    |     |           |        |     |   binding operator
+	     |              |     |           |        |     |
+	     |              |     |           |        |    bound species
+	     |              |     |           |        |
 	     |		    |     |           |        forward/backward operator
 	     |              |     |           |
 	     |		    |     |          unbound species
@@ -328,7 +333,7 @@ With this state site added, we can now go ahead and write the rules
 that will account for the binding step and the unbinding step as
 follows::
 
-   Rule('C8_Bid_bind', C8(b=None) + Bid(b=None, S='u') <>C8(b=1) % Bid(b=1, S='u'), kf, kr)
+   Rule('C8_Bid_bind', C8(b=None) + Bid(b=None, S='u') | C8(b=1) % Bid(b=1, S='u'), kf, kr)
    Rule('tBid_from_C8Bid', C8(b=1) % Bid(b=1, S='u') >> C8(b=None) % Bid(b=None, S='t'), kc)
 
 As shown, the initial reactants, *C8* and *Bid* initially in the
@@ -350,20 +355,23 @@ python prompts).::
 
    >>> import mymodel as m
    >>> m.model.monomers
-      {'C8': Monomer(name='C8', sites=['b'], site_states={}),
-      'Bid': Monomer(name='Bid', sites=['b', 'S'], site_states={'S': ['u', 't']})}
+      ComponentSet([
+       Monomer('C8', ['b']),
+       Monomer('Bid', ['b', 'S'], {'S': ['u', 't']}),
+       ])
    >>> model.parameters
-      {'kf': Parameter(name='kf', value=1.0e-07),
-       'kr': Parameter(name='kr', value=1.0e-03),
-       'kc': Parameter(name='kc', value=1.0    )}
+      ComponentSet([
+       Parameter('kf', 1e-07),
+       Parameter('kr', 0.001),
+       Parameter('kc', 1.0),
+       Parameter('C8_0', 1000.0),
+       Parameter('Bid_0', 10000.0),
+       ])
    >>> m.model.rules
-      {'C8_Bid_bind': Rule(name='C8_Bid_bind', reactants=C8(b=None) +
-      Bid(b=None, S='u'), products=C8(b=1) % Bid(b=1, S='u'),
-      rate_forward=Parameter(name='kf', value=1.0e-07),
-      rate_reverse=Parameter(name='kr', value=1.0e-03)),
-      'tBid_from_C8Bid': Rule(name='tBid_from_C8Bid', reactants=C8(b=1) %
-      Bid(b=1, S='u'u), products=C8(b=None) + Bid(b=None, S=t),
-      rate_forward=Parameter(name='kc', value=1.0))}
+      ComponentSet([
+       Rule('C8_Bid_bind', C8(b=None) + Bid(b=None, S='u') | C8(b=1) % Bid(b=1, S='u'), kf, kr),
+       Rule('tBid_from_C8Bid', C8(b=1) % Bid(b=1, S='u') >> C8(b=None) + Bid(b=None, S='t'), kc),
+       ])
 
 With this we are almost ready to run a simulation, all we need now is
 to specify the initial conditions of the system.
@@ -435,26 +443,31 @@ one shown (output shown below the ``'>>>'``` prompts)::
 
    >>> import mymodel as m
    >>> m.model.monomers
-      {'C8': Monomer(name='C8', sites=['b'], site_states={}),
-       'Bid': Monomer(name='Bid', sites=['b', 'S'], site_states={'S': ['u', 't']})}
+      ComponentSet([
+       Monomer('C8', ['b']),
+       Monomer('Bid', ['b', 'S'], {'S': ['u', 't']}),
+       ])
    >>> m.model.parameters
-      {'kf': Parameter(name='kf', value=1.0e-07),
-       'kr': Parameter(name='kr', value=1.0e-03),
-       'kc': Parameter(name='kc', value=1.0    ),
-       'C8_0': Parameter(name='C8_0', value=1000),
-       'Bid_0': Parameter(name='Bid_0', value=10000)}
+      ComponentSet([
+       Parameter('kf', 1e-07),
+       Parameter('kr', 0.001),
+       Parameter('kc', 1.0),
+       Parameter('C8_0', 1000.0),
+       Parameter('Bid_0', 10000.0),
+       ])
    >>> m.model.observables
-      {'obsC8': <pysb.core.Observable object at 0x104b2c4d0>,
-       'obsBid': <pysb.core.Observable object at 0x104b2c5d0>,
-       'obstBid': <pysb.core.Observable object at 0x104b2c6d0>}
-   >>> m.model.initial_conditions
-      [(C8(b=None), Parameter(name='C8_0', value=1000)), (Bid(b=None, S=u), Parameter(name='Bid_0', value=10000))]
+      ComponentSet([
+       Observable('obsC8', C8(b=None)),
+       Observable('obsBid', Bid(b=None, S='u')),
+       Observable('obstBid', Bid(b=None, S='t')),
+       ])
+   >>> m.model.initials
+      [Initial(C8(b=None), C8_0), Initial(Bid(b=None, S='u'), Bid_0)]
    >>> m.model.rules
-      {'C8_Bid_bind': Rule(name='C8_Bid_bind', reactants=C8(b=None) +
-      Bid(b=None, S=None), products=C8(b=1) % Bid(b=1, S=None),
-      rate_forward=Parameter(name='kf', value=1.0e-07),    rate_reverse=Parameter(name='kr', value=1.0e-03)),
-       'tBid_from_C8Bid': Rule(name='tBid_from_C8Bid', reactants=C8(b=1)
-       % Bid(b=1, S=u), products=C8(b=None) + Bid(b=None, S=t),    rate_forward=Parameter(name='kc', value=1.0))}
+      ComponentSet([
+       Rule('C8_Bid_bind', C8(b=None) + Bid(b=None, S='u') | C8(b=1) % Bid(b=1, S='u'), kf, kr),
+       Rule('tBid_from_C8Bid', C8(b=1) % Bid(b=1, S='u') >> C8(b=None) + Bid(b=None, S='t'), kc),
+       ])
 
 With this we are now ready to run a simulation! The parameter values
 for the simulation were taken directly from typical values in the
@@ -482,10 +495,10 @@ you are using iPython, you can press tab twice after "m.mymodel" to
 tab complete and see all the possible options). 
 
 
-Now, we will import the *PyLab* and PySB integrator module. Enter
+Now, we will import the *PyLab* and PySB simulator module. Enter
 the commands as shown below::
 
-   >>> from pysb.integrate import odesolve
+   >>> from pysb.simulator import ScipyOdeSimulator
    >>> import pylab as pl
 
 We have now loaded the integration engine and the graph engine into
@@ -521,28 +534,29 @@ following::
 
 These are the points at which we will get data for each ODE from the
 integrator. With this, we can now run our simulation. Enter the
-following commands to run the simulation::
+following commands to run the simulation and get the results::
 
-   >>> yout = odesolve(m.model, t)
+   >>> simres = ScipyOdeSimulator(m.model, tspan=t).run()
+   >>> yout = simres.all
 
 To verify that the simulation run you can see the content of the
 *yout* object. For example, check for the content of the *Bid*
 observable defined previously::
 
    >>> yout['obsBid']
-   array([ 10000.        ,   9601.77865674,   9224.08135988,   8868.37855506,
-            8534.45591732,   8221.19944491,   7927.08884234,   7650.48970981,
-            7389.81105408,   7143.5816199 ,   6910.47836131,   6689.32927828,
-            6479.10347845,   6278.89607041,   6087.91189021,   5905.45001654,
-            5730.89003662,   5563.68044913,   5403.32856328,   5249.39176146,
-            5101.47069899,   4959.20384615,   4822.26262101,   4690.34720441,
-            4563.18294803,   4440.51745347,   4322.11815173,   4207.77021789,
-            4097.27471952,   3990.44698008,   3887.11517373,   3787.11923497,
-            3690.30945136,   3596.54594391,   3505.69733323,   3417.64025401,
-            3332.25897699,   3249.44415872,   3169.09326717,   3091.10923365,
-            3015.40034777,   2941.87977234,   2870.4652525 ,   2801.07879018,
-            2733.64632469,   2668.09744369,   2604.36497901,   2542.38554596,
-            2482.09776367,   2423.44473279])
+   array([10000.        ,  9600.82692793,  9217.57613337,  8849.61042582,
+           8496.32045796,  8157.12260855,  7831.45589982,  7518.7808708 ,
+           7218.58018014,  6930.35656027,  6653.63344844,  6387.95338333,
+           6132.87596126,  5887.9786933 ,  5652.8553495 ,  5427.11687478,
+           5210.38806188,  5002.31066362,  4802.53910592,  4610.74136092,
+           4426.60062334,  4249.81001719,  4080.07733278,  3917.1205927 ,
+           3760.66947203,  3610.46475238,  3466.25716389,  3327.80762075,
+           3194.88629188,  3067.27263727,  2944.75491863,  2827.12948551,
+           2714.20140557,  2605.78289392,  2501.69402243,  2401.76203172,
+           2305.8208689 ,  2213.71139112,  2125.28052884,  2040.38151896,
+           1958.87334783,  1880.62057855,  1805.49336521,  1733.36675338,
+           1664.12107023,  1597.64120743,  1533.81668871,  1472.54158105,
+           1413.71396601,  1357.23623273])
 
 As you may recall we named some observables in the `Observables`_
 section above. The variable *yout* contains an array of all the ODE
@@ -619,7 +633,7 @@ happens quite often in models and it is one of the basic functions we
 have found useful in our model development. Rather than typing many
 lines such as::
 
-   Rule("association",  Enz(b=None) + Sub(b=None, S="i") <> Enz(b=1)%Sub(b=1,S="i"), kf, kr)
+   Rule("association",  Enz(b=None) + Sub(b=None, S="i") | Enz(b=1)%Sub(b=1,S="i"), kf, kr)
    Rule("dissociation", Enz(b=1)%Sub(b=1,S="i") >> Enz(b=None) + Sub(b=None, S="a"), kc)
    
 multiple times, we find it more powerful, transparent and easy to
@@ -641,7 +655,7 @@ concepts into a programmatic format. Examine the function below::
        S = sub({'b': None, site: state1})                      # (5) define substrate state in function
        ES = enz(b=1) % sub({'b': 1, site: state1})             # (6) define state of enzyme:substrate complex
        P = sub({'b': None, site: state2})                      # (7) define state of product
-       Rule(r1_name, E + S <> ES, kf, kr)                      # (8) rule for enzyme + substrate association (bidirectional)
+       Rule(r1_name, E + S | ES, kf, kr)                       # (8) rule for enzyme + substrate association (bidirectional)
        Rule(r2_name, ES >> E + P, kc)                          # (9) rule for enzyme:substrate dissociation  (unidirectional)
 
 As shown it takes about ten lines to write the catalyze function
@@ -921,7 +935,7 @@ hierarchical name of the module from which ``Model()`` is called, e.g.
 
 .. _BioNetGen: http://bionetgen.org/index.php/Documentation
 
-.. _Kappa: http://www.kappalanguage.org/documentation
+.. _Kappa: http://dev.executableknowledge.org/docs/KaSim-manual-master/KaSim_manual.htm
 
 .. _extrinsic apoptosis signaling: http://www.plosbiology.org/article/info%3Adoi%2F10.1371%2Fjournal.pbio.0060299
 

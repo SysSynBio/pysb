@@ -2,7 +2,8 @@ from pysb.core import *
 from pysb.annotation import Annotation
 
 __all__ = ['Observable', 'Initial', 'MatchOnce', 'Model', 'Monomer',
-           'Parameter', 'Compartment', 'Rule', 'ANY', 'WILD', 'Annotation']
+           'Parameter', 'Compartment', 'Rule', 'Expression', 'ANY', 'WILD',
+           'Annotation', 'MultiState', 'Tag']
 
 try:
     import reinteract         # fails if reinteract not installed
@@ -12,3 +13,7 @@ except (ImportError, AttributeError) as e:
 else:
     import pysb.reinteract_integration
     pysb.reinteract_integration.apply_mixins()
+
+from ._version import get_versions
+__version__ = get_versions()['version']
+del get_versions

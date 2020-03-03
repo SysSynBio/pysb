@@ -23,11 +23,21 @@ Note that some PDF viewers will auto-reload a changed PDF, so you may not even
 need to manually reopen it every time you rerun the tool.
 """
 
+from __future__ import print_function
 import sys
 import os
 import re
-import pygraphviz
+try:
+    import pygraphviz
+except ImportError:
+    pygraphviz = None
 import pysb.bng
+
+# Alias basestring under Python 3 for forwards compatibility
+try:
+    basestring
+except NameError:
+    basestring = str
 
 def run(model):
     """
@@ -49,6 +59,9 @@ def run(model):
 
 
 def render_species_as_dot(species_list, graph_name=""):
+    if pygraphviz is None:
+        raise ImportError('pygraphviz library is required to run this '
+                          'function')
     graph = pygraphviz.AGraph(name="%s species" % graph_name, rankdir="LR",
                               fontname='Arial')
     graph.edge_attr.update(fontname='Arial', fontsize=8)
@@ -71,7 +84,7 @@ def render_species_as_dot(species_list, graph_name=""):
             for site in mp.monomer.sites:
                 site_state = None
                 cond = mp.site_conditions[site]
-                if isinstance(cond, str):
+                if isinstance(cond, basestring):
                     site_state = cond
                 elif isinstance(cond, tuple):
                     site_state = cond[0]
@@ -95,7 +108,7 @@ def render_species_as_dot(species_list, graph_name=""):
                             label=monomer_label, shape="none", fontname="Arial",
                             fontsize=8)
         for bi, sites in bonds.items():
-            node_names, port_names = zip(*sites)
+            node_names, port_names = list(zip(*sites))
             sgraph.add_edge(node_names, tailport=port_names[0],
                             headport=port_names[1], label=str(bi))
     return graph.string()
@@ -106,7 +119,7 @@ usage = usage[1:]  # strip leading newline
 if __name__ == '__main__':
     # sanity checks on filename
     if len(sys.argv) <= 1:
-        print usage,
+        print(usage, end=' ')
         exit()
     model_filename = sys.argv[1]
     if not os.path.exists(model_filename):
@@ -121,12 +134,12 @@ if __name__ == '__main__':
         # which we use, there will be trouble (use the imp package and import
         # as some safe name?)
         model_module = __import__(model_name)
-    except StandardError as e:
-        print "Error in model script:\n"
+    except Exception as e:
+        print("Error in model script:\n")
         raise
     # grab the 'model' variable from the module
     try:
         model = model_module.__dict__['model']
     except KeyError:
         raise Exception("File '%s' isn't a model file" % model_filename)
-    print run(model)
+    print(run(model))

@@ -1,9 +1,10 @@
-#!/usr/bin/env python
 """Reproduce figures 4A and 4B from the EARM 1.0 publication (Albeck et
 al. 2008)."""
 
-from pysb.integrate import odesolve
-from pylab import *
+from __future__ import print_function
+from pysb.simulator import ScipyOdeSimulator
+import matplotlib.pyplot as plt
+from numpy import *
 
 from earm_1_0 import model
 
@@ -18,7 +19,7 @@ L_0_baseline = model.parameters['L_0'].value
 
 
 def fig_4a():
-    print "Simulating model for figure 4A..."
+    print("Simulating model for figure 4A...")
     t = linspace(0, 20*3600, 20*60+1)  # 20 hours, in seconds, 1 min sampling
     dt = t[1] - t[0]
 
@@ -35,12 +36,12 @@ def fig_4a():
     fs = empty_like(Ls)
     Ts = empty_like(Ls)
     Td = empty_like(Ls)
-    print "Scanning over %d values of L_0" % len(Ls)
+    print("Scanning over %d values of L_0" % len(Ls))
     for i in range(len(Ls)):
         model.parameters['L_0'].value = Ls[i]
 
-        print "  L_0 = %g" % Ls[i]
-        x = odesolve(model, t)
+        print("  L_0 = %g" % Ls[i])
+        x = ScipyOdeSimulator(model).run(tspan=t).all
 
         fs[i] = (x['PARP_unbound'][0] - x['PARP_unbound'][-1]) / x['PARP_unbound'][0]
         dP = 60 * (x['PARP_unbound'][:-1] - x['PARP_unbound'][1:]) / (dt * x['PARP_unbound'][0])  # in minutes
@@ -49,12 +50,13 @@ def fig_4a():
         Ts[i] = 1 / dPmax  # minutes
         Td[i] = t[ttn] / 60  # minutes
 
-    figure("Figure 4A")
-    plot(Ls/Lfactor, Td, 'g-', Ls/Lfactor, (1-CVenv)*Td, 'g--', Ls/Lfactor, (1+CVenv)*Td, 'g--')
-    errorbar(Ls_exp/Lfactor, Td_exp, Td_std, None, 'go', capsize=0),
-    ylabel('Td (min)'),
-    xlabel('TRAIL (ng/ml)'),
-    a = gca()
+    plt.figure("Figure 4A")
+    plt.plot(Ls/Lfactor, Td, 'g-', Ls/Lfactor, (1-CVenv)*Td, 'g--', Ls/Lfactor,
+          (1+CVenv)*Td, 'g--')
+    plt.errorbar(Ls_exp/Lfactor, Td_exp, Td_std, None, 'go', capsize=0),
+    plt.ylabel('Td (min)'),
+    plt.xlabel('TRAIL (ng/ml)'),
+    a = plt.gca()
     a.set_xscale('log')
     a.set_xlim((min(Ls) / Lfactor, max(Ls) / Lfactor))
     a.set_ylim((0, 1000))
@@ -63,10 +65,10 @@ def fig_4a():
 
 
 def fig_4b():
-    print "Simulating model for figure 4B..."
+    print("Simulating model for figure 4B...")
 
     t = linspace(0, 6*3600, 6*60+1)  # 6 hours
-    x = odesolve(model, t)
+    x = ScipyOdeSimulator(model).run(tspan=t).all
 
     x_norm = c_[x['Bid_unbound'], x['PARP_unbound'], x['mSmac_unbound']]
     x_norm = 1 - x_norm / x_norm[0, :]  # gets away without max() since first values are largest
@@ -77,17 +79,17 @@ def fig_4b():
 
     tp = t / 3600  # x axis as hours
 
-    figure("Figure 4B")
-    plot(tp, x_norm[:,0], 'b', label='IC substrate (tBid)')
-    plot(tp, x_norm[:,1], 'y', label='EC substrate (cPARP)')
-    plot(tp, x_norm[:,2], 'r', label='MOMP (cytosolic Smac)')
-    legend(loc='upper left', bbox_to_anchor=(0,1)).draw_frame(False)
-    xlabel('Time (hr)')
-    ylabel('fraction')
-    a = gca()
+    plt.figure("Figure 4B")
+    plt.plot(tp, x_norm[:,0], 'b', label='IC substrate (tBid)')
+    plt.plot(tp, x_norm[:,1], 'y', label='EC substrate (cPARP)')
+    plt.plot(tp, x_norm[:,2], 'r', label='MOMP (cytosolic Smac)')
+    plt.legend(loc='upper left', bbox_to_anchor=(0,1)).draw_frame(False)
+    plt.xlabel('Time (hr)')
+    plt.ylabel('fraction')
+    a = plt.gca()
     a.set_ylim((-.05, 1.05))
 
 
 fig_4a()
 fig_4b()
-show()
+plt.show()
